@@ -1,24 +1,31 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-#from pathlib import Path
 from scipy import stats
 import os
+import math
 from scipy.optimize import curve_fit
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']  # 优先使用SimHei（黑体）
+T_095 = {
+    3:4.30,
+    4:3.18,
+    5:2.78,
+    6:2.57,
+    7:2.45,
+    8:2.36,
+    9:2.31,
+    10:2.26,
+    15:2.14,
+    20:2.09
+}
 
 class PhysicsExperimentBasic:
     def __init__(self):
         self.__data__ = None
-        self.slope = None # deprecating...
-        self.intercept = None # deprecating...
-        self.r_value = None
-        self.p_value = None
-        self.std_err = None
         self.xlike = None
         self.ylike = None
-        self.yhat = None
+        self.r_sq = None
         self.regression = None
         self.regression_function_str = None
     
@@ -92,20 +99,21 @@ class PhysicsExperimentBasic:
             return False
         
         # 使用scipy的stats进行线性回归
-        self.slope, self.intercept, self.r_value, self.p_value, self.std_err = stats.linregress(self.xlike, self.ylike)
+        slope, intercept, r_value, p_value, std_err = stats.linregress(self.xlike, self.ylike)
 
         def linear_regression_instance(x):
-            return self.slope * x + self.intercept
+            return slope * x + intercept
         
+        self.r_sq = r_value**2
         self.regression = linear_regression_instance
-        self.regression_function_str = f"y = {self.slope:.4f}x + {self.intercept:.4f}"
+        self.regression_function_str = f"y = {slope:.4f}x + {intercept:.4f}"
         
         print("=====线性拟合结果=====\n")
         print(f"回归方程: {self.regression_function_str}")
-        print(f"相关系数 R: {self.r_value:.4f}")
-        print(f"决定系数R²: {self.r_value**2:.4f}")
-        print(f"P值: {self.p_value:.4f}")
-        print(f"标准误差: {self.std_err:.4f}")
+        print(f"相关系数 R: {r_value:.4f}")
+        print(f"决定系数R²: {r_value**2:.4f}")
+        print(f"P值: {p_value:.4f}")
+        print(f"标准误差: {std_err:.4f}")
         
         return True
 
@@ -126,7 +134,6 @@ class PhysicsExperimentBasic:
             # 使用curve_fit进行多项式拟合
             popt, _ = curve_fit(target_polynomial, self.xlike, self.ylike, p0=initial_guess)
             
-            # 计算R²分数
             y_pred = target_polynomial(self.xlike, *popt)
             ss_res = np.sum((self.ylike - y_pred) ** 2)
             ss_tot = np.sum((self.ylike - np.mean(self.ylike)) ** 2)
@@ -135,10 +142,10 @@ class PhysicsExperimentBasic:
             def fit_function(x):
                 return target_polynomial(x, *popt)
             
+            self.r_sq = r_squared
             self.regression = fit_function
             
             print(f"====={degree}次多项式拟合结果=====\n")
-            #print("拟合方程: y = ", end="")
             function_str = "y = "
             equation_parts = []
             for i, coef in enumerate(popt):
@@ -157,6 +164,83 @@ class PhysicsExperimentBasic:
     def quadratic(self):
         return self.polynomial(degree=2)
     
+    def sinusoidal(self, function_type='basic', initial_guess=None):
+        """
+        从CSV文件中读取数据并进行正弦型函数拟合
+        
+        :param function_type: 正弦函数类型, 可选 'basic', 'damped', 'multi_freq'
+        :param initial_guess: 初始参数猜测的列表, 如果为None则自动估计
+        """
+        def basic_sinusoidal(x, A, f, phi, offset):
+            """基本正弦函数: A * sin(2π * f * x + phi) + offset"""
+            return A * np.sin(2 * np.pi * f * x + phi) + offset
+        
+        def damped_sinusoidal(x, A, f, phi, decay, offset):
+            """衰减正弦函数: A * sin(2π * f * x + phi) * exp(-decay * x) + offset"""
+            return A * np.sin(2 * np.pi * f * x + phi) * np.exp(-decay * x) + offset
+        
+        def multi_freq_sinusoidal(x, A1, f1, phi1, A2, f2, phi2, offset):
+            """双频率正弦函数: A1 * sin(2π * f1 * x + phi1) + A2 * sin(2π * f2 * x + phi2) + offset"""
+            return A1 * np.sin(2 * np.pi * f1 * x + phi1) + A2 * np.sin(2 * np.pi * f2 * x + phi2) + offset
+        
+        if function_type == 'basic':
+            fit_function = basic_sinusoidal
+            param_names = ['振幅(A)', '频率(f)', '相位(φ)', '偏移量']
+            if initial_guess is None:
+                amplitude_guess = (np.max(self.ylike) - np.min(self.ylike)) / 2
+                freq_guess = 1.0 / (np.max(self.xlike) - np.min(self.xlike)) if np.max(self.xlike) > np.min(self.xlike) else 0.1
+                phase_guess = 0
+                offset_guess = np.mean(self.ylike)
+                initial_guess = [amplitude_guess, freq_guess, phase_guess, offset_guess]
+        elif function_type == 'damped':
+            fit_function = damped_sinusoidal
+            param_names = ['振幅(A)', '频率(f)', '相位(φ)', '衰减系数', '偏移量']
+            if initial_guess is None:
+                amplitude_guess = (np.max(self.ylike) - np.min(self.ylike)) / 2
+                freq_guess = 1.0 / (np.max(self.xlike) - np.min(self.xlike)) if np.max(self.xlike) > np.min(self.xlike) else 0.1
+                phase_guess = 0
+                decay_guess = 0.1
+                offset_guess = np.mean(self.ylike)
+                initial_guess = [amplitude_guess, freq_guess, phase_guess, decay_guess, offset_guess]
+        elif function_type == 'multi_freq':
+            fit_function = multi_freq_sinusoidal
+            param_names = ['振幅1(A1)', '频率1(f1)', '相位1(φ1)', '振幅2(A2)', '频率2(f2)', '相位2(φ2)', '偏移量']
+            if initial_guess is None:
+                amplitude_guess = (np.max(self.ylike) - np.min(self.ylike)) / 4
+                freq_guess = 1.0 / (np.max(self.xlike) - np.min(self.xlike)) if np.max(self.xlike) > np.min(self.xlike) else 0.1
+                phase_guess = 0
+                offset_guess = np.mean(self.ylike)
+                initial_guess = [amplitude_guess, freq_guess, phase_guess, 
+                            amplitude_guess/2, freq_guess*2, phase_guess, 
+                            offset_guess]
+        else:
+            raise ValueError("不支持的函数类型，请检查你的输入")
+        
+        try:
+            # 使用curve_fit进行正弦拟合
+            popt, _ = curve_fit(fit_function, self.xlike, self.ylike, p0=initial_guess, maxfev=5000)
+            
+            y_pred = fit_function(self.xlike, *popt)
+            ss_res = np.sum((self.ylike - y_pred) ** 2)
+            ss_tot = np.sum((self.ylike - np.mean(self.ylike)) ** 2)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+            
+            def fitted_function(x):
+                return fit_function(x, *popt)
+            
+            self.r_sq = r_squared
+            self.regression = fitted_function
+            
+            print(f"\n=== {function_type} 正弦拟合结果 ===")
+            print(f"决定系数R²: {r_squared:.6f}")
+            print("拟合参数:")
+            for name, value in zip(param_names, popt):
+                print(f"  {name}: {value:.6f}")
+
+        except Exception as e:
+            print(f"拟合过程中出现错误: {e}")
+            print("请尝试调整初始猜测参数或使用不同的函数类型")
+
     # visualizing
     def plot(
             self, 
@@ -237,7 +321,55 @@ class PhysicsExperimentBasic:
             return None
         
         return self.regression(x)
+    
+    # uncertainty analyze
+    def calculate_uncertainty(self, data = "y"):
+        if data == "x":
+            measurements = self.xlike
+        elif data == "y":
+            measurements = self.ylike
+        else:
+            raise ValueError
+        average = sum(measurements) / len(measurements)
+        print(f"测量值的平均值为：{average:.6f}")
+        
+        # \Delta_A:
+        if len(measurements) > 1:
+            variance = sum((x - average) ** 2 for x in measurements) / (len(measurements) - 1)
+            variance_std = math.sqrt(variance)
+            print(f"贝塞尔标准偏差为：{variance_std:.6f}")
+            u_a = T_095[len(measurements)]*math.sqrt(variance) / math.sqrt(len(measurements))
+            print(f"在95%的置信水平下, A类不确定度(统计方法)为: {u_a:.6f}")
+        else:
+            print("只输入了一个测量值, 无法计算A类不确定度。")
+            u_a = 0
+        
+        # \Delta_B
+        try:
+            u_b = float(input("请输入B类不确定度（非统计方法）："))
+        except ValueError:
+            print("输入无效，B类不确定度设为0。")
+            u_b = 0
+        
+        # 计算合成不确定度
+        u_c = math.sqrt(u_a ** 2 + u_b ** 2)
+        print(f"合成不确定度为：{u_c:.6f}")
+        u_r = u_c/average*100
+        print(f"相对不确定度为：{u_r:.4f} %")
+        
+        # 计算扩展不确定度（置信水平95%）
+        print(f"在95%的置信水平下，测量结果表示为：{average:.6f} ± {u_c:.6f}")
 
     # utils
+    def get_status(self, verbose=True):
+        if self.__data__ is None:
+            print("没有存储任何数据。")
+        else:
+            if verbose:
+                print(f"x: {self.xlike[0,5]}...")
+                print(f"y: {self.ylike[0,5]}...")
+                print(f"拟合方程: {self.regression_function_str}")
+                print(f"使用此方程的决定系数: {self.r_sq}")
+
     def __call__(self, *args, **kwds):
-        return self.linear()
+        return self.get_status(*args, **kwds)

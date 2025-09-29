@@ -52,7 +52,7 @@ class PhysicsExperimentBasic:
     
     def read_from_keyboard(self):
         """
-        从键盘中读取数据
+        从键盘中读取x, y数据, 可以为任意浮点数值, 以end结束输入
         """
         print("请输入x的值")
         measurements_x = []
@@ -118,6 +118,10 @@ class PhysicsExperimentBasic:
         return True
 
     def polynomial(self, degree : int = 2):
+        """执行多项式拟合
+
+        :param degree: 使用的多项式的次数
+        """
         if len(self.xlike) == 0:
             raise ValueError("数据中没有有效的数值")
         
@@ -162,14 +166,16 @@ class PhysicsExperimentBasic:
             print(f"拟合过程中出现错误: {e}")
 
     def quadratic(self):
+        """使用二次多项式拟合"""
         return self.polynomial(degree=2)
     
-    def sinusoidal(self, function_type='basic', initial_guess=None):
+    def sinusoidal(self, function_type='basic', initial_guess=None, maxfev=10000):
         """
-        从CSV文件中读取数据并进行正弦型函数拟合
+        进行正弦型函数拟合
         
         :param function_type: 正弦函数类型, 可选 'basic', 'damped', 'multi_freq'
         :param initial_guess: 初始参数猜测的列表, 如果为None则自动估计
+        :param maxfev: 估计次数，如果出现拟合失败`Number of calls to function has reached maxfev`可以调高该参数 
         """
         def basic_sinusoidal(x, A, f, phi, offset):
             """基本正弦函数: A * sin(2π * f * x + phi) + offset"""
@@ -218,7 +224,7 @@ class PhysicsExperimentBasic:
         
         try:
             # 使用curve_fit进行正弦拟合
-            popt, _ = curve_fit(fit_function, self.xlike, self.ylike, p0=initial_guess, maxfev=5000)
+            popt, _ = curve_fit(fit_function, self.xlike, self.ylike, p0=initial_guess, maxfev=maxfev)
             
             y_pred = fit_function(self.xlike, *popt)
             ss_res = np.sum((self.ylike - y_pred) ** 2)
@@ -236,6 +242,15 @@ class PhysicsExperimentBasic:
             print("拟合参数:")
             for name, value in zip(param_names, popt):
                 print(f"  {name}: {value:.6f}")
+
+            if function_type == 'basic':
+                self.regression_function_str=f"y = {popt[0]} sin ( 2π * {popt[1]} x + {popt[2]} ) + {popt[3]}"
+            elif function_type == "damped":
+                self.regression_function_str=f"y = {popt[0]} sin ( 2π * {popt[1]} x + {popt[2]} ) exp ( - {popt[3]} x ) + {popt[4]}"
+            elif function_type == "multi_freq":
+                self.regression_function_str=f"y = {popt[0]} sin ( 2π * {popt[1]} x + {popt[2]} ) + {popt[3]} sin ( 2π {popt[4]} x + {popt[5]} ) + {popt[6]}"
+
+            print(f"拟合方程: {self.regression_function_str}")
 
         except Exception as e:
             print(f"拟合过程中出现错误: {e}")
@@ -350,7 +365,7 @@ class PhysicsExperimentBasic:
         except ValueError:
             print("输入无效，B类不确定度设为0。")
             u_b = 0
-        
+
         # 计算合成不确定度
         u_c = math.sqrt(u_a ** 2 + u_b ** 2)
         print(f"合成不确定度为：{u_c:.6f}")
